@@ -1,0 +1,15 @@
+{
+  "name": "Джедай — трекер задач",
+  "short_name": "Джедай",
+  "description": "Личный трекер задач по джедайским техникам Максима Дорофеева",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFFFFF",
+  "theme_color": "#FFFFFF",
+  "lang": "ru",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
