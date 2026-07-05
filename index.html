@@ -439,7 +439,7 @@ function openTask(id){
   const inInbox=x.project==='inbox';
   let h=`<div class="grip"></div>
     <h3>${inInbox?'Разбери задачу':'Задача'}</h3>
-    <p class="hint">${inInbox?'Сформулируй конкретным действием («позвонить…», «написать…») и выбери направление — задача уедет из входящих в самый низ выбранного списка.':'Поправь текст или перенеси в другое направление.'}</p>
+    <p class="hint">${inInbox?'Опиши действие («позвонить…», «написать…») и <b>тапни направление</b> — задача сразу уедет туда.':'Поправь текст или <b>тапни направление</b>, чтобы перенести.'}</p>
     <textarea id="tText" rows="2">${esc(x.text)}</textarea>
     <div class="field-lbl">Направление</div>
     <div class="pick" id="pickProj">
@@ -459,6 +459,14 @@ function saveTask(){
   if(draft.project!==x.project){x.project=draft.project;x.orderAt=Date.now();}  // сменил доску -> в низ нового списка
   touch(x);
   save();closeSheet();render();vibrate(8);
+}
+function assignProject(pid){          // тап по направлению = сразу перенести и закрыть
+  const x=S.tasks.find(t=>t.id===editId);if(!x)return;
+  const ta=$('#tText');if(ta)draft.text=ta.value;
+  x.text=(draft.text||'').trim()||x.text;
+  if(pid!==x.project){x.project=pid;x.orderAt=Date.now();}
+  touch(x);save();closeSheet();render();vibrate(10);
+  toast('→ '+(board(pid).short||board(pid).name));
 }
 function delTask(){const id=editId;closeSheet();deleteById(id);}
 function openSheet(html){$('#sheet').innerHTML=html;$('#scrim').classList.add('on');$('#sheet').classList.add('on');}
@@ -484,7 +492,7 @@ document.addEventListener('click',e=>{
   }
 });
 document.addEventListener('click',e=>{
-  const pp=e.target.closest('#pickProj button');if(pp){pickProj(pp.dataset.p);return;}
+  const pp=e.target.closest('#pickProj button');if(pp){assignProject(pp.dataset.p);return;}
 });
 $('#scrim').addEventListener('click',closeSheet);
 document.addEventListener('keydown',e=>{
