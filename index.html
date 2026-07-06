@@ -175,17 +175,17 @@ main{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;p
 //==================== СОСТОЯНИЕ ====================
 const KEY='jedi.state.v3';
 const WEEK=7*86400000;
+const APP_VER='v15';
 const DEFAULT_PROJECTS=[
   {id:'personal', name:'Личное',            short:'Личное',     emoji:'🏠', color:'#F5A623'},
   {id:'money',    name:'Петы с деньгами',    short:'С деньгами', emoji:'💰', color:'#25C26E'},
-  {id:'office',   name:'Работа в офисе',     short:'Офис',       emoji:'🏢', color:'#3B82F6'},
   {id:'free',     name:'Петы без денег',     short:'Без денег',  emoji:'🧪', color:'#9B6DD6'},
   {id:'hobby',    name:'Хобби',              short:'Хобби',      emoji:'🎨', color:'#FF6B4A'},
 ];
 const INBOX={id:'inbox', name:'Входящие', short:'Входящие', emoji:'📥', color:'#8B9199'};
 const PROJECT_IDS=new Set(DEFAULT_PROJECTS.map(p=>p.id));
 const ALLOWED=new Set([...PROJECT_IDS,'inbox']);
-const PROJ_REMAP={health:'personal', calendar:'personal'};
+const PROJ_REMAP={health:'personal', calendar:'personal', office:'inbox'};
 
 function seed(){
   const now=Date.now();
@@ -300,6 +300,7 @@ function renderHome(){
   });
   const total=S.tasks.filter(x=>!x.done).length;
   h+=`<button class="all-link" data-nav="all">Все задачи · ${total}</button>`;
+  h+=`<div style="text-align:center;color:var(--muted2);font-size:11px;padding:12px 0 0;font-weight:700">${APP_VER}</div>`;
   h+='</div>';
   main.innerHTML=h;
 }
@@ -517,7 +518,10 @@ main.addEventListener('touchstart',e=>{
 main.addEventListener('touchmove',e=>{
   if(!sw)return;
   const t=e.touches[0], dx=t.clientX-sw.x0, dy=t.clientY-sw.y0;
-  if(sw.lock===null && (Math.abs(dx)>10||Math.abs(dy)>10)) sw.lock=Math.abs(dx)>Math.abs(dy)?'h':'v';
+  if(sw.lock===null){                       // тап и вертикаль не должны считаться свайпом
+    if(Math.abs(dy)>12) sw.lock='v';
+    else if(Math.abs(dx)>18) sw.lock='h';
+  }
   if(sw.lock!=='h')return;
   e.preventDefault();
   sw.dx=dx;

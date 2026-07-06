@@ -1,6 +1,6 @@
 // Офлайн-кеш приложения. /api/* НЕ кешируем (это синхронизация — всегда сеть).
 // Стратегия: network-first (свежий код долетает), с откатом в кеш без сети.
-const CACHE = 'jedi-v14';
+const CACHE = 'jedi-v15';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', e => {
