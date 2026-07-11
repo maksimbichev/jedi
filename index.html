@@ -104,6 +104,7 @@ main{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;p
 .trash-actions{margin:2px 2px 12px;}
 .trash-actions button{width:100%;font-size:13.5px;font-weight:800;color:var(--red);background:rgba(255,59,48,.07);border:1px solid rgba(255,59,48,.22);border-radius:12px;padding:12px;}
 .trash-actions button:active{background:rgba(255,59,48,.15);}
+.synccode{background:var(--card);border:1.5px dashed var(--line2);border-radius:12px;padding:16px;text-align:center;font-size:18px;font-weight:800;letter-spacing:1px;color:var(--text);user-select:all;-webkit-user-select:all;word-break:break-all;}
 
 /* Чёрная черта над готовыми */
 .doneline{display:flex;align-items:center;gap:11px;margin:26px 2px 14px;}
@@ -175,7 +176,7 @@ main{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;p
 //==================== СОСТОЯНИЕ ====================
 const KEY='jedi.state.v3';
 const WEEK=7*86400000;
-const APP_VER='v15';
+const APP_VER='v16';
 const DEFAULT_PROJECTS=[
   {id:'personal', name:'Личное',            short:'Личное',     emoji:'🏠', color:'#F5A623'},
   {id:'money',    name:'Петы с деньгами',    short:'С деньгами', emoji:'💰', color:'#25C26E'},
@@ -300,6 +301,7 @@ function renderHome(){
   });
   const total=S.tasks.filter(x=>!x.done).length;
   h+=`<button class="all-link" data-nav="all">Все задачи · ${total}</button>`;
+  h+=`<button class="all-link" data-act="syncSheet">${syncCode?'🔄 Синхронизация включена':'🔄 Настроить синхронизацию'}</button>`;
   h+=`<div style="text-align:center;color:var(--muted2);font-size:11px;padding:12px 0 0;font-weight:700">${APP_VER}</div>`;
   h+='</div>';
   main.innerHTML=h;
@@ -490,6 +492,12 @@ document.addEventListener('click',e=>{
     case 'del':delTask();break;
     case 'untrash':untrashTask(id);break;
     case 'emptyTrash':askEmptyTrash();break;
+    case 'syncSheet':syncSheet();break;
+    case 'syncNew':enableSync(genCode());break;
+    case 'syncJoin':{const i=$('#codeIn');enableSync(i?i.value:'');break;}
+    case 'copyCode':copyCode();break;
+    case 'restoreBackup':restoreBackup();break;
+    case 'syncOff':syncOff();break;
   }
 });
 document.addEventListener('click',e=>{
@@ -546,56 +554,169 @@ function endSwipe(){
 main.addEventListener('touchend',endSwipe);
 main.addEventListener('touchcancel',endSwipe);
 
-//==================== СИНХРОНИЗАЦИЯ ====================
-const isHTTP=location.protocol==='http:'||location.protocol==='https:';
-const API=location.origin+'/api';
-const TOKEN=(new URLSearchParams(location.search).get('token'))||localStorage.getItem('jedi.token')||'jedi-local';
-localStorage.setItem('jedi.token',TOKEN);
-let syncEnabled=false, syncing=false, applyingRemote=false, syncTimer=null;
+//============ СИНХРОНИЗАЦИЯ (облако + шифрование на устройстве) ============
+// В облаке лежит ТОЛЬКО шифртекст. Ключ выводится из кода синхронизации,
+// который знаешь только ты — сервис расшифровать данные не может.
+const SB_URL='https://ubhhdmisfmkamhwczcla.supabase.co/rest/v1';
+const SB_KEY='sb_publishable_-GU8atO4DLk4aepu_erozA_IWU9kyQ8';   // публичный ключ, так и задуман
+const CODE_KEY='jedi.synccode', JOINED_KEY='jedi.joined', BACKUP_KEY='jedi.backup';
+let syncCode=localStorage.getItem(CODE_KEY)||'';
+let syncId=null, cryptoKey=null, syncing=false, applyingRemote=false, syncTimer=null;
+
 function setSyncDot(state){
   const d=document.querySelector('header .dot');if(!d)return;
   const col={ok:'#25C26E',sync:'#FFB020',off:'#FF3B30',local:'#FFDD2D'};
   d.style.background=col[state]||'#FFDD2D';
-  d.title={ok:'Синхронизировано',sync:'Синхронизация…',off:'Нет связи — работаю локально',local:'Локально'}[state]||'';
+  d.title={ok:'Синхронизировано',sync:'Синхронизация…',off:'Нет связи — работаю локально',local:'Локально (синк выключен)'}[state]||'';
 }
-function metaPayload(){return{updatedAt:S.metaUpdatedAt,projects:S.projects};}
-function scheduleSync(){if(!syncEnabled)return;clearTimeout(syncTimer);syncTimer=setTimeout(syncNow,1200);}
+
+// --- крипто (AES-GCM, ключ из кода через PBKDF2) ---
+function b64enc(b){let s='';for(let i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);return btoa(s);}
+function b64dec(s){const bin=atob(s),a=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);return a;}
+async function deriveSync(code){
+  const enc=new TextEncoder();
+  const idBuf=await crypto.subtle.digest('SHA-256',enc.encode(code+'|jedi-id'));
+  const id=[...new Uint8Array(idBuf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+  const base=await crypto.subtle.importKey('raw',enc.encode(code),'PBKDF2',false,['deriveKey']);
+  const key=await crypto.subtle.deriveKey(
+    {name:'PBKDF2',salt:enc.encode('jedi-sync-v1'),iterations:120000,hash:'SHA-256'},
+    base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+  return {id,key};
+}
+async function encryptJSON(obj,key){
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(JSON.stringify(obj)));
+  const out=new Uint8Array(12+ct.byteLength);out.set(iv,0);out.set(new Uint8Array(ct),12);
+  return b64enc(out);
+}
+async function decryptJSON(b64,key){
+  const raw=b64dec(b64);
+  const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:raw.slice(0,12)},key,raw.slice(12));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
+// --- облако ---
+const sbH=()=>({'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY});
+async function sbGet(){
+  const r=await fetch(`${SB_URL}/sync?id=eq.${syncId}&select=data`,{headers:sbH(),cache:'no-store'});
+  if(!r.ok)throw new Error('get '+r.status);
+  const rows=await r.json();
+  return rows[0]||null;
+}
+async function sbPut(cipher){
+  const r=await fetch(`${SB_URL}/sync`,{method:'POST',
+    headers:{...sbH(),'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},
+    body:JSON.stringify([{id:syncId,data:cipher,updated_at:Date.now()}])});
+  if(!r.ok)throw new Error('put '+r.status);
+}
+
+// --- слияние: по updatedAt, удаления через надгробия ---
+function mergeRemote(remote){
+  const pick=(m,t)=>{const p=m[t.id];if(!p||(t.updatedAt||0)>(p.updatedAt||0))m[t.id]=t;};
+  const tm={},tb={};
+  (S.tasks||[]).forEach(t=>pick(tm,t));
+  (remote.tasks||[]).forEach(t=>pick(tm,t));
+  (S.tombstones||[]).forEach(t=>pick(tb,t));
+  (remote.tombstones||[]).forEach(t=>pick(tb,t));
+  const cutoff=Date.now()-30*86400000;
+  const tombs=Object.values(tb).filter(t=>(t.updatedAt||0)>=cutoff);
+  const dead=new Map(tombs.map(t=>[t.id,t.updatedAt||0]));
+  S.tasks=Object.values(tm).filter(t=>{const u=dead.get(t.id);return u===undefined||u<(t.updatedAt||0);});
+  S.tombstones=tombs;
+}
+
+function scheduleSync(){if(!syncCode)return;clearTimeout(syncTimer);syncTimer=setTimeout(syncNow,1500);}
 async function syncNow(){
-  if(!syncEnabled||syncing)return;
+  if(!syncCode||!cryptoKey||syncing)return;
   syncing=true;setSyncDot('sync');
   try{
-    const res=await fetch(API+'/sync',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({token:TOKEN,tasks:S.tasks,tombstones:S.tombstones,meta:metaPayload()})});
-    if(!res.ok)throw new Error(res.status);
-    adoptRemote(await res.json());
+    const row=await sbGet();
+    if(row&&row.data){
+      let remote;
+      try{remote=await decryptJSON(row.data,cryptoKey);}
+      catch(e){setSyncDot('off');syncing=false;toast('Код не подходит к данным в облаке');return;} // чужое не затираем
+      applyingRemote=true;
+      if(localStorage.getItem(JOINED_KEY)!==syncId){   // первое подключение к коду — берём облако
+        // СТРАХОВКА: сохраняем то, что было на устройстве, чтобы можно было вернуть
+        try{localStorage.setItem(BACKUP_KEY,JSON.stringify({tasks:S.tasks,tombstones:S.tombstones,at:Date.now()}));}catch(e){}
+        S.tasks=remote.tasks||[];S.tombstones=remote.tombstones||[];
+      }else{
+        mergeRemote(remote);
+      }
+      migrate(S);
+      localStorage.setItem(KEY,JSON.stringify(S));
+      applyingRemote=false;
+    }
+    localStorage.setItem(JOINED_KEY,syncId);
+    await sbPut(await encryptJSON({tasks:S.tasks,tombstones:S.tombstones},cryptoKey));
     setSyncDot('ok');
+    render();
   }catch(e){setSyncDot('off');}
   syncing=false;
 }
-function adoptRemote(data){
-  if(!data)return;
-  applyingRemote=true;
-  if(Array.isArray(data.tasks))S.tasks=data.tasks;
-  if(Array.isArray(data.tombstones))S.tombstones=data.tombstones;
-  if(data.meta){
-    if(data.meta.projects)S.projects=data.meta.projects;
-    if(data.meta.updatedAt)S.metaUpdatedAt=data.meta.updatedAt;
+
+// --- код синхронизации ---
+function genCode(){
+  const a='abcdefghijkmnpqrstuvwxyz23456789';
+  const r=crypto.getRandomValues(new Uint8Array(16));
+  let s='';for(let i=0;i<16;i++){s+=a[r[i]%a.length];if(i%4===3&&i<15)s+='-';}
+  return s;
+}
+async function enableSync(code){
+  code=(code||'').trim().toLowerCase();
+  if(code.length<8){toast('Код слишком короткий');return;}
+  syncCode=code;localStorage.setItem(CODE_KEY,syncCode);
+  const d=await deriveSync(syncCode);syncId=d.id;cryptoKey=d.key;
+  closeSheet();render();
+  await syncNow();
+  toast('Синхронизация включена ✅');
+}
+function syncOff(){
+  syncCode='';syncId=null;cryptoKey=null;
+  localStorage.removeItem(CODE_KEY);localStorage.removeItem(JOINED_KEY);
+  closeSheet();render();setSyncDot('local');toast('Синхронизация выключена');
+}
+function copyCode(){
+  try{navigator.clipboard.writeText(syncCode);toast('Код скопирован');}catch(e){toast('Скопируй вручную');}
+}
+function restoreBackup(){                      // вернуть задачи, что были до подключения (объединением — ничего не теряем)
+  try{
+    const b=JSON.parse(localStorage.getItem(BACKUP_KEY)||'null');
+    if(!b||!Array.isArray(b.tasks)||!b.tasks.length){toast('Бэкапа нет');return;}
+    mergeRemote({tasks:b.tasks,tombstones:b.tombstones||[]});
+    migrate(S);save();closeSheet();render();
+    toast('Вернул задачи: '+b.tasks.length);
+  }catch(e){toast('Не удалось восстановить');}
+}
+function syncSheet(){
+  let h=`<div class="grip"></div><h3>Синхронизация</h3>`;
+  if(syncCode){
+    h+=`<p class="hint">Задачи одинаковы на всех устройствах с этим кодом. В облаке данные <b>зашифрованы</b> — без кода их не прочитать.</p>
+      <div class="field-lbl">Твой код</div>
+      <div class="synccode">${esc(syncCode)}</div>
+      <p class="hint">Введи этот же код на другом устройстве. <b>Сохрани код</b> — без него данные из облака не восстановить.</p>
+      <div class="actions"><button class="btn primary" data-act="copyCode">Скопировать код</button></div>
+      <div class="btn-row">
+        ${localStorage.getItem(BACKUP_KEY)?`<button data-act="restoreBackup"><span class="bi">⏪</span>Вернуть задачи, что были до подключения</button>`:''}
+        <button class="danger" data-act="syncOff"><span class="bi">⛔️</span>Отключить синхронизацию</button>
+      </div>`;
+  }else{
+    h+=`<p class="hint">Чтобы задачи были одни и те же на телефоне и на компьютере. Данные шифруются на устройстве — облако видит только «кашу».</p>
+      <div class="actions"><button class="btn primary" data-act="syncNew">Создать код и включить</button></div>
+      <div class="field-lbl">…или подключиться к существующему</div>
+      <textarea id="codeIn" rows="1" placeholder="вставь код с другого устройства" autocapitalize="off" autocorrect="off"></textarea>
+      <div class="actions"><button class="btn primary" data-act="syncJoin">Подключиться</button></div>
+      <p class="hint">⚠️ Если по этому коду в облаке уже есть задачи — они заменят задачи на этом устройстве.</p>`;
   }
-  migrate(S);
-  localStorage.setItem(KEY,JSON.stringify(S));
-  applyingRemote=false;
-  render();
+  openSheet(h);
 }
 async function initSync(){
-  if(!isHTTP){setSyncDot('local');return;}
-  try{
-    const r=await fetch(API+'/ping',{cache:'no-store'});if(!r.ok)throw 0;
-    syncEnabled=true;
-    await syncNow();
-    setInterval(()=>{if(document.visibilityState==='visible')syncNow();},25000);
-    document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')syncNow();});
-    window.addEventListener('online',syncNow);
-  }catch(e){syncEnabled=false;setSyncDot('local');}
+  if(!syncCode){setSyncDot('local');return;}
+  const d=await deriveSync(syncCode);syncId=d.id;cryptoKey=d.key;
+  await syncNow();
+  setInterval(()=>{if(document.visibilityState==='visible')syncNow();},20000);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')syncNow();});
+  window.addEventListener('online',syncNow);
 }
 
 //==================== СТАРТ ====================
