@@ -85,7 +85,8 @@ main{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;p
 .swipe-wrap.sw-right .lbl-done{display:block;}
 .swipe-wrap.sw-left .lbl-del{display:block;}
 .task:active{transform:scale(.985);}
-.task .body{flex:1;min-width:0;}
+.task .body{flex:1;min-width:0;cursor:pointer;}
+.check{cursor:pointer;}
 .task .txt{font-size:15.5px;font-weight:600;line-height:1.35;word-wrap:break-word;}
 .task .meta{margin-top:8px;}
 .check{width:24px;height:24px;border-radius:50%;border:2px solid var(--line2);flex:none;display:grid;place-items:center;transition:all .15s;background:var(--card);}
@@ -176,7 +177,7 @@ main{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;p
 //==================== СОСТОЯНИЕ ====================
 const KEY='jedi.state.v3';
 const WEEK=7*86400000;
-const APP_VER='v16';
+const APP_VER='v17';
 const DEFAULT_PROJECTS=[
   {id:'personal', name:'Личное',            short:'Личное',     emoji:'🏠', color:'#F5A623'},
   {id:'money',    name:'Петы с деньгами',    short:'С деньгами', emoji:'💰', color:'#25C26E'},
@@ -516,7 +517,11 @@ document.addEventListener('click',e=>{
 
 // Свайпы по задаче: вправо — выполнить, влево — удалить (с подложкой и надписью)
 const TH=88;
-let sw=null;
+let sw=null, swallowClick=false;
+// один клик после настоящего свайпа глушим (чтобы свайп не открывал задачу)
+document.addEventListener('click',e=>{
+  if(swallowClick){swallowClick=false;e.stopPropagation();e.preventDefault();}
+},true);
 main.addEventListener('touchstart',e=>{
   const wrap=e.target.closest('.swipe-wrap');
   if(!wrap||wrap.classList.contains('completing')){sw=null;return;}
@@ -531,7 +536,7 @@ main.addEventListener('touchmove',e=>{
     else if(Math.abs(dx)>18) sw.lock='h';
   }
   if(sw.lock!=='h')return;
-  e.preventDefault();
+  // ВАЖНО: НЕ вызываем preventDefault — иначе iOS гасит клик и тап по задаче не открывает окно
   sw.dx=dx;
   sw.card.style.transition='none';
   sw.card.style.transform=`translateX(${dx}px)`;
@@ -540,7 +545,7 @@ main.addEventListener('touchmove',e=>{
   sw.wrap.classList.toggle('sw-left',dx<0);
   const past=Math.abs(dx)>TH;
   if(past&&!sw.buzzed){sw.buzzed=true;vibrate(8);} if(!past)sw.buzzed=false;
-},{passive:false});
+},{passive:true});
 function endSwipe(){
   if(!sw)return;
   const {wrap,card,id,dx,lock}=sw; sw=null;
@@ -548,8 +553,10 @@ function endSwipe(){
   card.style.transition='transform .2s ease';
   card.style.transform='';
   if(lock!=='h')return;
-  if(dx>TH){completeAnimated(id,wrap);}
-  else if(dx<-TH){deleteById(id);}
+  if(dx>TH||dx<-TH){
+    swallowClick=true;setTimeout(()=>{swallowClick=false;},600);   // после свайпа не открывать задачу
+    if(dx>TH)completeAnimated(id,wrap); else deleteById(id);
+  }
 }
 main.addEventListener('touchend',endSwipe);
 main.addEventListener('touchcancel',endSwipe);
