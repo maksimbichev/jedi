@@ -76,8 +76,10 @@ main{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;p
 .task{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin-bottom:9px;display:flex;gap:12px;align-items:flex-start;box-shadow:var(--shadow-sm);overflow:hidden;transition:transform .12s;}
 /* Свайп-обёртка: под карточкой видна подложка с надписью */
 .swipe-wrap{position:relative;margin-bottom:9px;border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow-sm);}
-.swipe-wrap .task{margin-bottom:0;box-shadow:none;}
-.swipe-bg{position:absolute;inset:0;display:flex;align-items:center;padding:0 22px;opacity:0;}
+.swipe-wrap .task{margin-bottom:0;box-shadow:none;position:relative;z-index:1;}
+/* КРИТИЧНО: подложка невидима, но БЕЗ pointer-events:none она перехватывает все тапы по задаче.
+   Именно это ломало «тап по задаче → выбор раздела». НЕ УБИРАТЬ. */
+.swipe-bg{position:absolute;inset:0;display:flex;align-items:center;padding:0 22px;opacity:0;pointer-events:none;z-index:0;}
 .swipe-wrap.sw-active .swipe-bg{opacity:1;}
 .swipe-wrap.sw-right .swipe-bg{background:var(--green);justify-content:flex-start;}
 .swipe-wrap.sw-left .swipe-bg{background:var(--red);justify-content:flex-end;}
@@ -177,7 +179,7 @@ main{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;p
 //==================== СОСТОЯНИЕ ====================
 const KEY='jedi.state.v3';
 const WEEK=7*86400000;
-const APP_VER='v18';
+const APP_VER='v19';
 const DEFAULT_PROJECTS=[
   {id:'personal', name:'Личное',            short:'Личное',     emoji:'🏠', color:'#F5A623'},
   {id:'money',    name:'Петы с деньгами',    short:'С деньгами', emoji:'💰', color:'#25C26E'},
