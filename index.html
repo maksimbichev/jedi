@@ -179,7 +179,7 @@ main{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;p
 //==================== СОСТОЯНИЕ ====================
 const KEY='jedi.state.v3';
 const WEEK=7*86400000;
-const APP_VER='v19';
+const APP_VER='v20';
 const DEFAULT_PROJECTS=[
   {id:'personal', name:'Личное',            short:'Личное',     emoji:'🏠', color:'#F5A623'},
   {id:'money',    name:'Петы с деньгами',    short:'С деньгами', emoji:'💰', color:'#25C26E'},
@@ -211,6 +211,11 @@ function uid(){return Math.random().toString(36).slice(2,9);}
 let S=load();
 function load(){
   try{const r=JSON.parse(localStorage.getItem(KEY)); if(r&&r.tasks)return migrate(r);}catch(e){}
+  // Если синк настроен, а локальные данные битые/пропали — НЕ засеваем демо-задачи:
+  // иначе они уедут в облако и размножатся на всех устройствах. Ждём данные из облака.
+  if(localStorage.getItem('jedi.synccode')){
+    return migrate({tasks:[],tombstones:[],projects:[],metaUpdatedAt:Date.now()});
+  }
   return seed();
 }
 function migrate(r){
@@ -237,7 +242,11 @@ function migrate(r){
 }
 function save(){
   S.metaUpdatedAt=Date.now();
-  localStorage.setItem(KEY,JSON.stringify(S));
+  try{
+    localStorage.setItem(KEY,JSON.stringify(S));
+  }catch(e){                                    // переполнение памяти — не роняем приложение
+    try{toast('⚠️ Память переполнена — очисти корзину и архив');}catch(_){}
+  }
   if(!applyingRemote)scheduleSync();
 }
 
@@ -275,13 +284,18 @@ function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>'
 function projChip(id){const b=board(id);return `<span class="chip"><span class="pdot" style="background:${b.color}"></span>${b.short||b.name}</span>`;}
 
 //==================== РЕНДЕР ====================
+let lastView=null;
 function render(){
+  const keepScroll=(lastView===view);              // не прыгать наверх при действии внутри списка
+  const sc=keepScroll?main.scrollTop:0;
+  lastView=view;
   renderHeader();
   const cap=$('#cap');
   if(cap)cap.placeholder=(view==='home'||view==='all')?'Быстро закинь задачу во входящие…':(board(view).id==='inbox'?'Добавить во входящие…':`Добавить в «${board(view).short||board(view).name}»…`);
   if(view==='home')renderHome();
   else if(view==='all')renderAll();
   else renderBoard(view);
+  main.scrollTop=sc;
 }
 function renderHeader(){
   const hdr=$('#hdr');
@@ -457,7 +471,6 @@ function openTask(id){
   openSheet(h);
   setTimeout(()=>{const ta=$('#tText');if(ta)ta.addEventListener('input',()=>draft.text=ta.value);},50);
 }
-function pickProj(id){draft.project=id;document.querySelectorAll('#pickProj button').forEach(b=>b.classList.toggle('on',b.dataset.p===id));vibrate(5);}
 function saveTask(){
   const x=S.tasks.find(t=>t.id===editId);if(!x)return;
   const ta=$('#tText');if(ta)draft.text=ta.value;
@@ -584,7 +597,7 @@ const SB_URL='https://ubhhdmisfmkamhwczcla.supabase.co/rest/v1';
 const SB_KEY='sb_publishable_-GU8atO4DLk4aepu_erozA_IWU9kyQ8';   // публичный ключ, так и задуман
 const CODE_KEY='jedi.synccode', JOINED_KEY='jedi.joined', BACKUP_KEY='jedi.backup';
 let syncCode=localStorage.getItem(CODE_KEY)||'';
-let syncId=null, cryptoKey=null, syncing=false, applyingRemote=false, syncTimer=null;
+let syncId=null, cryptoKey=null, syncing=false, applyingRemote=false, syncTimer=null, syncFails=0;
 
 function setSyncDot(state){
   const d=document.querySelector('header .dot');if(!d)return;
@@ -619,14 +632,32 @@ async function decryptJSON(b64,key){
 }
 
 // --- облако ---
+// Ходим через защищённые RPC-функции (таблицу нельзя перечислить и подобрать чужую строку).
+// Пока функции не созданы в БД — откатываемся на прямой доступ, чтобы не было простоя.
 const sbH=()=>({'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY});
+let useRpc=true;
 async function sbGet(){
+  if(useRpc){
+    const r=await fetch(`${SB_URL}/rpc/sync_get`,{method:'POST',
+      headers:{...sbH(),'Content-Type':'application/json'},body:JSON.stringify({p_id:syncId})});
+    if(r.ok){const d=await r.json();return d?{data:d}:null;}
+    if(r.status===404){useRpc=false;}                  // функций ещё нет — старый путь
+    else throw new Error('get '+r.status);
+  }
   const r=await fetch(`${SB_URL}/sync?id=eq.${syncId}&select=data`,{headers:sbH(),cache:'no-store'});
   if(!r.ok)throw new Error('get '+r.status);
   const rows=await r.json();
   return rows[0]||null;
 }
 async function sbPut(cipher){
+  if(useRpc){
+    const r=await fetch(`${SB_URL}/rpc/sync_put`,{method:'POST',
+      headers:{...sbH(),'Content-Type':'application/json'},
+      body:JSON.stringify({p_id:syncId,p_data:cipher})});
+    if(r.ok)return;
+    if(r.status===404){useRpc=false;}
+    else throw new Error('put '+r.status);
+  }
   const r=await fetch(`${SB_URL}/sync`,{method:'POST',
     headers:{...sbH(),'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},
     body:JSON.stringify([{id:syncId,data:cipher,updated_at:Date.now()}])});
@@ -673,8 +704,13 @@ async function syncNow(){
     localStorage.setItem(JOINED_KEY,syncId);
     await sbPut(await encryptJSON({tasks:S.tasks,tombstones:S.tombstones},cryptoKey));
     setSyncDot('ok');
+    syncFails=0;
     render();
-  }catch(e){setSyncDot('off');}
+  }catch(e){
+    setSyncDot('off');
+    // не молчим: иначе устройства неделями расходятся, а человек не в курсе
+    if(++syncFails===3)toast('⚠️ Синхронизация не работает — задачи не расходятся между устройствами');
+  }
   syncing=false;
 }
 
@@ -687,7 +723,8 @@ function genCode(){
 }
 async function enableSync(code){
   code=(code||'').trim().toLowerCase();
-  if(code.length<8){toast('Код слишком короткий');return;}
+  // Слабый код = слабое шифрование: его можно подобрать перебором. Минимум 16 символов.
+  if(code.replace(/[^a-z0-9]/g,'').length<12){toast('Код слишком простой — нужен длинный код (лучше сгенерировать)');return;}
   syncCode=code;localStorage.setItem(CODE_KEY,syncCode);
   const d=await deriveSync(syncCode);syncId=d.id;cryptoKey=d.key;
   closeSheet();render();
@@ -741,6 +778,10 @@ async function initSync(){
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')syncNow();});
   window.addEventListener('online',syncNow);
 }
+
+// Доступ для автотестов (tests/sync.mjs). Секретов не раскрывает — весь код и так публичный,
+// зато позволяет тестировать слияние/шифрование/миграцию, где живут тихие потери данных.
+window.__jedi={get S(){return S;},set S(v){S=v;},migrate,mergeRemote,deriveSync,encryptJSON,decryptJSON};
 
 //==================== СТАРТ ====================
 render();
