@@ -177,7 +177,7 @@ main{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;p
 //==================== СОСТОЯНИЕ ====================
 const KEY='jedi.state.v3';
 const WEEK=7*86400000;
-const APP_VER='v17';
+const APP_VER='v18';
 const DEFAULT_PROJECTS=[
   {id:'personal', name:'Личное',            short:'Личное',     emoji:'🏠', color:'#F5A623'},
   {id:'money',    name:'Петы с деньгами',    short:'С деньгами', emoji:'💰', color:'#25C26E'},
@@ -482,6 +482,9 @@ document.addEventListener('click',e=>{
   if(nav){view=nav.dataset.nav;render();vibrate(4);main.scrollTop=0;return;}
   const el=e.target.closest('[data-act]');
   if(!el)return;
+  handleAct(el);
+});
+function handleAct(el){
   const act=el.dataset.act,id=el.dataset.id;
   switch(act){
     case 'home':view='home';render();break;
@@ -500,7 +503,7 @@ document.addEventListener('click',e=>{
     case 'restoreBackup':restoreBackup();break;
     case 'syncOff':syncOff();break;
   }
-});
+}
 document.addEventListener('click',e=>{
   const pp=e.target.closest('#pickProj button');if(pp){assignProject(pp.dataset.p);return;}
 });
@@ -518,15 +521,16 @@ document.addEventListener('click',e=>{
 // Свайпы по задаче: вправо — выполнить, влево — удалить (с подложкой и надписью)
 const TH=88;
 let sw=null, swallowClick=false;
-// один клик после настоящего свайпа глушим (чтобы свайп не открывал задачу)
+// Глушим ТОЛЬКО призрачный клик по самому списку задач (после тапа/свайпа).
+// Клики в окне разбора (оно вне main) не трогаем — иначе выбор раздела не сработает.
 document.addEventListener('click',e=>{
-  if(swallowClick){swallowClick=false;e.stopPropagation();e.preventDefault();}
+  if(swallowClick&&main.contains(e.target)){swallowClick=false;e.stopPropagation();e.preventDefault();}
 },true);
 main.addEventListener('touchstart',e=>{
   const wrap=e.target.closest('.swipe-wrap');
   if(!wrap||wrap.classList.contains('completing')){sw=null;return;}
   const t=e.touches[0];
-  sw={wrap,card:wrap.querySelector('.task'),id:wrap.dataset.row,x0:t.clientX,y0:t.clientY,dx:0,lock:null,buzzed:false};
+  sw={wrap,card:wrap.querySelector('.task'),id:wrap.dataset.row,x0:t.clientX,y0:t.clientY,dx:0,lock:null,buzzed:false,target:e.target};
 },{passive:true});
 main.addEventListener('touchmove',e=>{
   if(!sw)return;
@@ -548,14 +552,24 @@ main.addEventListener('touchmove',e=>{
 },{passive:true});
 function endSwipe(){
   if(!sw)return;
-  const {wrap,card,id,dx,lock}=sw; sw=null;
+  const {wrap,card,id,dx,lock,target}=sw; sw=null;
   wrap.classList.remove('sw-active','sw-right','sw-left');
   card.style.transition='transform .2s ease';
   card.style.transform='';
-  if(lock!=='h')return;
-  if(dx>TH||dx<-TH){
-    swallowClick=true;setTimeout(()=>{swallowClick=false;},600);   // после свайпа не открывать задачу
-    if(dx>TH)completeAnimated(id,wrap); else deleteById(id);
+  if(lock==='h'){
+    if(dx>TH||dx<-TH){
+      swallowClick=true;setTimeout(()=>{swallowClick=false;},600);   // после свайпа не открывать задачу
+      if(dx>TH)completeAnimated(id,wrap); else deleteById(id);
+    }
+    return;
+  }
+  // ЭТО ТАП. Обрабатываем напрямую из touchend — iOS не всегда даёт click на <div>.
+  if(lock===null&&target){
+    const el=target.closest?target.closest('[data-act]'):null;
+    if(el){
+      swallowClick=true;setTimeout(()=>{swallowClick=false;},500);   // чтобы не сработало дважды
+      handleAct(el);
+    }
   }
 }
 main.addEventListener('touchend',endSwipe);
