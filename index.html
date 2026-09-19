@@ -187,13 +187,14 @@ body.dragmode main{overflow:hidden;}
 const KEY='jedi.state.v3';
 const HINT_DRAG='jedi.hint.drag';
 const WEEK=7*86400000;
-const APP_VER='v21';
+const APP_VER='v22';
 const DEFAULT_PROJECTS=[
   {id:'personal', name:'Личное',            short:'Личное',     emoji:'🏠', color:'#F5A623'},
   {id:'money',    name:'Петы с деньгами',    short:'С деньгами', emoji:'💰', color:'#25C26E'},
   {id:'free',     name:'Петы без денег',     short:'Без денег',  emoji:'🧪', color:'#9B6DD6'},
+  {id:'repair',   name:'Ремонт',             short:'Ремонт',     emoji:'🔨', color:'#2F80ED'},
   {id:'hobby',    name:'Хобби',              short:'Хобби',      emoji:'🎨', color:'#FF6B4A'},
-  {id:'later',    name:'Неактуально',        short:'Неактуально',emoji:'🗄', color:'#8B9199'},
+  {id:'later',    name:'Неактуально',        short:'Неактуально',emoji:'🗄', color:'#8B9199'},   // всегда последний
 ];
 const INBOX={id:'inbox', name:'Входящие', short:'Входящие', emoji:'📥', color:'#8B9199'};
 const PROJECT_IDS=new Set(DEFAULT_PROJECTS.map(p=>p.id));
